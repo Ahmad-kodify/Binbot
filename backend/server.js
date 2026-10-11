@@ -1,8 +1,10 @@
-require("dotenv").config();
+const path = require("path");
+// Support .env in either backend directory or root directory
+require("dotenv").config({ path: path.resolve(__dirname, ".env") });
+require("dotenv").config({ path: path.resolve(__dirname, "..", ".env") });
 
 const express = require("express");
 const cors = require("cors");
-const path = require("path");
 const crypto = require("crypto");
 
 const { connectDB, db } = require("./db");
