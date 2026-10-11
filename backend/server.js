@@ -112,17 +112,21 @@ app.post("/api/crawl", async (req, res) => {
         // Split text into chunks
         const chunks = processPagesIntoChunks(botId, crawlResult.pages);
 
-        // Generate embeddings in batches if AI provider is configured
+        // Generate embeddings in parallel batches of 10 for blazing speed
         if (process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY) {
-          for (let i = 0; i < chunks.length; i++) {
-            try {
-              const embedding = await generateEmbedding(chunks[i].text);
-              if (embedding) {
-                chunks[i].embedding = embedding;
-              }
-            } catch (embErr) {
-              console.warn(`[Index] Failed embedding for chunk ${i}: ${embErr.message}`);
-            }
+          const batchSize = 10;
+          for (let i = 0; i < chunks.length; i += batchSize) {
+            const batch = chunks.slice(i, i + batchSize);
+            await Promise.allSettled(
+              batch.map(async (chunk) => {
+                try {
+                  const embedding = await generateEmbedding(chunk.text);
+                  if (embedding) {
+                    chunk.embedding = embedding;
+                  }
+                } catch {}
+              })
+            );
           }
         }
 

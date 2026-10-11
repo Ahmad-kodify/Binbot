@@ -142,67 +142,73 @@ async function crawlWebsite(startUrl, options = {}, onProgress = null) {
     }
   } catch {}
 
-  while (queue.length > 0 && crawledPages.length < maxPages) {
-    const current = queue.shift();
-    if (!current || visited.has(current.url)) continue;
+  const concurrency = options.concurrency || 4;
+  let activeWorkers = 0;
 
-    visited.add(current.url);
+  async function worker() {
+    while (queue.length > 0 && crawledPages.length < maxPages) {
+      const current = queue.shift();
+      if (!current || visited.has(current.url)) continue;
 
-    // Ensure it's still same origin
-    try {
-      const curParsed = new URL(current.url);
-      if (curParsed.origin !== origin) continue;
-    } catch {
-      continue;
-    }
+      visited.add(current.url);
 
-    try {
-      if (onProgress) {
-        onProgress({
-          status: "crawling",
-          currentUrl: current.url,
-          crawledCount: crawledPages.length,
-          queueLength: queue.length,
-        });
+      // Ensure it's still same origin
+      try {
+        const curParsed = new URL(current.url);
+        if (curParsed.origin !== origin) continue;
+      } catch {
+        continue;
       }
 
-      const res = await safeFetch(current.url, { timeoutMs: timeoutPerRequestMs });
-      const extracted = extractPageContent(res.body, current.url);
+      try {
+        if (onProgress) {
+          onProgress({
+            status: "crawling",
+            currentUrl: current.url,
+            crawledCount: crawledPages.length,
+            queueLength: queue.length,
+          });
+        }
 
-      if (extracted.text.length > 50) {
-        crawledPages.push({
-          url: extracted.url,
-          title: extracted.title,
-          headings: extracted.headings,
-          text: extracted.text,
-          charCount: extracted.charCount,
-        });
-      }
+        const res = await safeFetch(current.url, { timeoutMs: timeoutPerRequestMs });
+        const extracted = extractPageContent(res.body, current.url);
 
-      // If depth allows, enqueue new unvisited links from this page
-      if (current.depth < maxDepth && crawledPages.length < maxPages) {
-        for (const link of extracted.links) {
-          if (!visited.has(link)) {
-            try {
-              const linkParsed = new URL(link);
-              // Strictly restrict to same origin
-              if (linkParsed.origin === origin) {
-                // Avoid binary or media files
-                const ext = linkParsed.pathname.split(".").pop().toLowerCase();
-                const ignoredExts = ["png", "jpg", "jpeg", "gif", "svg", "pdf", "zip", "mp4", "mp3", "webp", "ico", "woff", "woff2", "css", "js"];
-                if (!ignoredExts.includes(ext)) {
-                  queue.push({ url: link, depth: current.depth + 1 });
+        if (extracted.text.length > 50 && crawledPages.length < maxPages) {
+          crawledPages.push({
+            url: extracted.url,
+            title: extracted.title,
+            headings: extracted.headings,
+            text: extracted.text,
+            charCount: extracted.charCount,
+          });
+        }
+
+        // If depth allows, enqueue new unvisited links from this page
+        if (current.depth < maxDepth && crawledPages.length < maxPages) {
+          for (const link of extracted.links) {
+            if (!visited.has(link)) {
+              try {
+                const linkParsed = new URL(link);
+                if (linkParsed.origin === origin) {
+                  const ext = linkParsed.pathname.split(".").pop().toLowerCase();
+                  const ignoredExts = ["png", "jpg", "jpeg", "gif", "svg", "pdf", "zip", "mp4", "mp3", "webp", "ico", "woff", "woff2", "css", "js"];
+                  if (!ignoredExts.includes(ext)) {
+                    queue.push({ url: link, depth: current.depth + 1 });
+                  }
                 }
-              }
-            } catch {}
+              } catch {}
+            }
           }
         }
+      } catch (err) {
+        // Silently skip inaccessible pages
       }
-    } catch (err) {
-      console.warn(`[Crawler] Failed crawling ${current.url}: ${err.message}`);
-      // Continue crawling other pages gracefully
     }
   }
+
+  // Run concurrency workers in parallel
+  const workers = Array.from({ length: concurrency }, () => worker());
+  await Promise.all(workers);
 
   return {
     origin,
